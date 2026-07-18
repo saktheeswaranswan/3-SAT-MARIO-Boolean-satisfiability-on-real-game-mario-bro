@@ -1,0 +1,373 @@
+// --- Game State Constants ---
+final int STATE_START = 0;
+final int STATE_WALK_TO_BLOCK = 1;
+final int STATE_JUMP_HIT = 2;
+final int STATE_WAIT_MUSHROOM = 3;
+final int STATE_GROWING = 4;
+final int STATE_WALK_EXIT = 5;
+
+// --- Engine Variables ---
+float scaleFactor = 1.0;
+int currentState = STATE_START;
+int stateTimer = 0;
+
+// --- Mario Variables ---
+float marioX = 380;
+float marioY = 364;
+float marioVX = 0;
+float marioVY = 0;
+float marioW = 26;
+float marioH = 36;
+boolean isBig = false;
+boolean marioOnGround = true;
+float marioSpeed = 2.5;
+
+// --- Mushroom Variables ---
+boolean mushActive = false;
+float mushX, mushY;
+float mushVX = 0;
+float mushVY = 0;
+float mushW = 24;
+float mushH = 24;
+
+// --- Level Data ---
+ArrayList<Block> blocks = new ArrayList<Block>();
+
+void setup() {
+  fullScreen();
+  orientation(LANDSCAPE);
+  rectMode(CORNER);
+  ellipseMode(CENTER);
+  createLevel();
+}
+
+void draw() {
+  // 1. Screen Scaling (Target Resolution 960x540)
+  scaleFactor = min((float)width / 960.0, (float)height / 540.0);
+  background(107, 140, 255);
+  
+  pushMatrix();
+  translate((width - 960 * scaleFactor) / 2, (height - 540 * scaleFactor) / 2);
+  scale(scaleFactor);
+  
+  // 2. Draw Background Scenery
+  drawCloud(150, 80);
+  drawBush(400, 365);
+  drawStartMarker(370, 400); // Yellow Start Spot
+  
+  // 3. Process Physics & AI
+  updateAutoPlay();
+  updatePhysics();
+  
+  // 4. Render Level & Entities
+  for (Block b : blocks) {
+    b.display();
+  }
+  
+  if (mushActive) {
+    drawMushroom(mushX, mushY);
+  }
+  
+  drawMario(marioX, marioY);
+  drawUI();
+  
+  popMatrix();
+}
+
+// --- Level Geometry Builder (Chocolate Boxes) ---
+void createLevel() {
+  blocks.clear();
+  
+  // Base Ground (Thick Chocolate Blocks)
+  for (int x = 40; x < 960; x += 40) {
+    blocks.add(new Block(x, 400, 40, 40, 1));
+    blocks.add(new Block(x, 440, 40, 40, 1));
+    blocks.add(new Block(x, 480, 40, 40, 1));
+  }
+  
+  // Left Cave Wall
+  for (int y = 120; y < 400; y += 40) {
+    blocks.add(new Block(240, y, 40, 40, 1));
+    blocks.add(new Block(280, y, 40, 40, 1));
+    blocks.add(new Block(320, y, 40, 40, 1));
+  }
+  
+  // High Roof Enclosure
+  for (int x = 360; x < 600; x += 40) {
+    blocks.add(new Block(x, 120, 40, 40, 1));
+    blocks.add(new Block(x, 160, 40, 40, 1));
+  }
+  
+  // Right Step-Down Restriction Ceiling
+  for (int x = 600; x < 960; x += 40) {
+    blocks.add(new Block(x, 200, 40, 40, 1));
+    blocks.add(new Block(x, 240, 40, 40, 1));
+    blocks.add(new Block(x, 280, 40, 40, 1));
+  }
+  
+  // Target Item Block (Gray)
+  blocks.add(new Block(480, 240, 40, 40, 2));
+}
+
+// --- Block Class & Collision Logic ---
+class Block {
+  float x, y, w, h;
+  int type; // 1 = Chocolate Box, 2 = Item Block, 3 = Empty Block
+  
+  Block(float x, float y, float w, float h, int type) {
+    this.x = x; this.y = y; this.w = w; this.h = h; this.type = type;
+  }
+  
+  void display() {
+    strokeWeight(2);
+    if (type == 1) {
+      // Drawing the Chocolate Boxes Correctly
+      stroke(60, 20, 0); // Dark border
+      fill(120, 50, 15); // Rich chocolate brown
+      rect(x, y, w, h);
+      
+      // Inner bevel to make it look like a chocolate bar chunk
+      noFill();
+      stroke(160, 80, 30); // Lighter highlight
+      line(x + 4, y + 4, x + w - 4, y + 4);
+      line(x + 4, y + 4, x + 4, y + h - 4);
+      stroke(80, 30, 5); // Darker shadow
+      line(x + w - 4, y + 4, x + w - 4, y + h - 4);
+      line(x + 4, y + h - 4, x + w - 4, y + h - 4);
+      
+      // Center detail
+      stroke(60, 20, 0);
+      rect(x + 12, y + 12, w - 24, h - 24);
+      
+    } else if (type == 2) {
+      stroke(0);
+      fill(160); // Gray un-hit item block
+      rect(x, y, w, h);
+      fill(0); textAlign(CENTER, CENTER); textSize(24);
+      text("?", x + 20, y + 16);
+    } else if (type == 3) {
+      stroke(0);
+      fill(100); // Dead block
+      rect(x, y, w, h);
+    }
+  }
+}
+
+boolean checkAABB(float x1, float y1, float w1, float h1, float x2, float y2, float w2, float h2) {
+  return x1 < x2 + w2 && x1 + w1 > x2 && y1 < y2 + h2 && y1 + h1 > y2;
+}
+
+// --- Physics Engine ---
+void updatePhysics() {
+  // 1. Mario Gravity
+  if (currentState != STATE_GROWING) {
+    marioVY += 0.6; // Gravity
+    if (marioVY > 12) marioVY = 12; // Terminal velocity
+    
+    // Mario X Collision
+    marioX += marioVX;
+    for (Block b : blocks) {
+      if (checkAABB(marioX, marioY, marioW, marioH, b.x, b.y, b.w, b.h)) {
+        if (marioVX > 0) marioX = b.x - marioW;
+        else if (marioVX < 0) marioX = b.x + b.w;
+        marioVX = 0;
+      }
+    }
+    
+    // Mario Y Collision & Block Head-Bumping
+    marioY += marioVY;
+    marioOnGround = false;
+    for (Block b : blocks) {
+      if (checkAABB(marioX, marioY, marioW, marioH, b.x, b.y, b.w, b.h)) {
+        if (marioVY > 0) { // Stamping/Landing on top
+          marioY = b.y - marioH;
+          marioVY = 0;
+          marioOnGround = true;
+        } else if (marioVY < 0) { // Hitting head on bottom
+          marioY = b.y + b.h;
+          marioVY = 0;
+          // Activate block breaking logic
+          if (b.type == 2) {
+            b.type = 3; 
+            spawnMushroom(b);
+          }
+        }
+      }
+    }
+  }
+  
+  // 2. Mushroom Physics 🍄
+  if (mushActive) {
+    mushVY += 0.6;
+    
+    // Mush X Collision
+    mushX += mushVX;
+    for (Block b : blocks) {
+      if (checkAABB(mushX, mushY, mushW, mushH, b.x, b.y, b.w, b.h)) {
+        if (mushVX > 0) { mushX = b.x - mushW; mushVX = -mushVX; }
+        else if (mushVX < 0) { mushX = b.x + b.w; mushVX = -mushVX; }
+      }
+    }
+    
+    // Mush Y Collision
+    mushY += mushVY;
+    for (Block b : blocks) {
+      if (checkAABB(mushX, mushY, mushW, mushH, b.x, b.y, b.w, b.h)) {
+        if (mushVY > 0) { mushY = b.y - mushH; mushVY = 0; }
+        else if (mushVY < 0) { mushY = b.y + b.h; mushVY = 0; }
+      }
+    }
+    
+    // Catch collision check with Mario to eat 🍄
+    if (currentState == STATE_WAIT_MUSHROOM) {
+      if (checkAABB(marioX, marioY, marioW, marioH, mushX, mushY, mushW, mushH)) {
+        mushActive = false;
+        currentState = STATE_GROWING;
+        stateTimer = 40;
+      }
+    }
+  }
+}
+
+// Spawns the Mushroom 🍄
+void spawnMushroom(Block b) {
+  mushActive = true;
+  mushX = b.x + 8;
+  mushY = b.y - mushH;
+  mushVX = 2.2; // Pops out and moves right
+  mushVY = -4.5; 
+}
+
+// --- Auto-Play AI State Machine ---
+void updateAutoPlay() {
+  switch(currentState) {
+    case STATE_START:
+      marioVX = 0;
+      stateTimer++;
+      if (stateTimer > 40) currentState = STATE_WALK_TO_BLOCK;
+      break;
+      
+    case STATE_WALK_TO_BLOCK:
+      marioVX = marioSpeed;
+      if (marioX >= 486) { // Reached center of the block
+        marioVX = 0;
+        marioVY = -12.5; // Jump directly upward
+        currentState = STATE_JUMP_HIT;
+      }
+      break;
+      
+    case STATE_JUMP_HIT:
+      if (marioOnGround) {
+        currentState = STATE_WAIT_MUSHROOM;
+      }
+      break;
+      
+    case STATE_WAIT_MUSHROOM:
+      // Mario hurries up to run and eat the falling mushroom 🍄
+      if (mushY > 240) { // Once it clears the block
+        if (marioX < mushX - 10) {
+          marioVX = marioSpeed * 1.6; // Hurry run! Sprinting speed
+        } else {
+          marioVX = marioSpeed * 0.8; // Match speed to catch it
+        }
+      }
+      break;
+      
+    case STATE_GROWING: // Grow Up phase
+      marioVX = 0;
+      marioVY = 0;
+      stateTimer--;
+      if (stateTimer <= 0) {
+        isBig = true;
+        marioH = 54;
+        marioY -= 18; // Shift Y up so Big Mario doesn't clip into floor
+        currentState = STATE_WALK_EXIT;
+      }
+      break;
+      
+    case STATE_WALK_EXIT:
+      marioVX = marioSpeed;
+      if (marioX > 980) resetSimulation();
+      break;
+  }
+}
+
+void resetSimulation() {
+  createLevel(); // Reset blocks
+  marioX = 380;
+  marioY = 364;
+  marioVX = 0;
+  marioVY = 0;
+  marioH = 36;
+  isBig = false;
+  mushActive = false;
+  stateTimer = 0;
+  currentState = STATE_START;
+}
+
+// --- Render Visuals ---
+void drawMario(float x, float y) {
+  pushMatrix();
+  translate(x, y);
+  
+  boolean renderBig = isBig;
+  if (currentState == STATE_GROWING && (frameCount % 6 < 3)) {
+    renderBig = !renderBig; // Growth flickering animation
+  }
+  
+  float dH = renderBig ? 54 : 36;
+  float dW = marioW;
+  float yOff = renderBig ? (36 - 54) : 0; 
+  
+  // Base Body
+  fill(216, 40, 0); 
+  stroke(0); strokeWeight(1);
+  rect(0, 12 + yOff, dW, dH - 12);
+  fill(0, 0, 180); 
+  rect(4, 16 + yOff, dW - 8, dH - 16);
+  // Head
+  fill(252, 188, 176);
+  rect(4, 2 + yOff, 16, 12);
+  // Cap
+  fill(216, 40, 0);
+  rect(2, yOff, 20, 4);
+  popMatrix();
+}
+
+void drawMushroom(float x, float y) {
+  fill(252, 228, 160); noStroke();
+  rect(x + 6, y + 10, 12, 14);
+  fill(216, 40, 0);
+  rect(x, y, 24, 12, 6, 6, 0, 0);
+  fill(255);
+  ellipse(x + 6, y + 6, 6, 6);
+  ellipse(x + 18, y + 6, 6, 6);
+}
+
+void drawStartMarker(float x, float bottomY) {
+  stroke(255, 255, 0);
+  strokeWeight(4);
+  line(x, bottomY - 50, x, bottomY);
+  noFill();
+  ellipse(x, bottomY - 60, 20, 20);
+}
+
+void drawCloud(float x, float y) {
+  fill(255); noStroke();
+  rect(x, y, 90, 30, 15);
+  rect(x + 15, y - 15, 60, 30, 15);
+}
+
+void drawBush(float x, float y) {
+  fill(0, 168, 0); noStroke();
+  ellipse(x, y, 30, 30);
+  ellipse(x + 20, y - 5, 35, 35);
+  ellipse(x + 40, y, 30, 30);
+}
+
+void drawUI() {
+  fill(0, 180); noStroke();
+  rect(20, 20, 150, 40, 4);
+  fill(255); textAlign(LEFT, CENTER); textSize(16);
+  text("Start gadget", 35, 38);
+}
