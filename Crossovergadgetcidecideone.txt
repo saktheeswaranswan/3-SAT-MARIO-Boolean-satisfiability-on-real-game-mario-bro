@@ -1,0 +1,467 @@
+// Super Mario NP-Hardness Crossover Gadget Simulator
+// Autoplays TWO phases to perfectly demonstrate the crossover logic.
+// Yellow = Breakable Bricks | Chocolate = Unbreakable Platforms
+
+int ROWS = 19;
+int COLS = 26;
+
+// 1 = Chocolate (Unbreakable), 2 = Q-Block, 3 = Yellow (Breakable), 0 = Empty, 4 = Used Block
+int[][] originalGrid = {
+  //0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5
+  { 1,1,1,1,1,1,1,1,0,0,0,0,1,1,1,1,0,0,1,1,1,1,1,0,0,0 }, // 0 (Cleared top vertical bricks)
+  { 1,1,1,1,1,1,1,1,0,0,0,0,1,1,1,1,0,0,1,1,1,1,1,3,3,3 }, // 1 (Horizontal Exit Bricks)
+  { 0,0,0,0,0,0,0,1,3,3,3,3,1,1,1,1,0,0,1,0,0,0,2,0,0,0 }, // 2 (Upper bridge 8-11, Q-block 22)
+  { 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0 }, // 3 (1-high gap path strictly for Small Mario)
+  { 1,1,1,1,1,1,1,1,3,3,3,3,1,1,1,1,1,1,1,1,1,1,1,1,1,1 }, // 4 (Lower bridge 8-11. Goomba Platform 0-7)
+  { 1,1,1,1,1,1,0,0,0,0,0,0,1,0,1,1,1,1,1,1,1,1,1,1,1,1 }, // 5 (Bumpy central wall starts)
+  { 1,1,1,1,1,0,0,1,0,0,0,0,1,0,1,1,1,1,1,1,1,1,1,1,1,1 }, // 6 
+  { 0,0,0,1,0,0,1,1,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1 }, // 7 
+  { 0,0,0,1,0,0,1,1,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1 }, // 8
+  { 1,1,1,1,0,0,1,1,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1 }, // 9 (Main shaft open 8-11. Left tunnel open at 4-5)
+  { 1,1,1,1,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1 }, // 10 (Walking path left from main shaft to col 4)
+  { 1,1,1,1,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1 }, // 11 (Floor under main shaft. Shaft continues at 4-5)
+  { 1,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1 }, // 12 (Walking path left from col 4 to col 1)
+  { 1,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1 }, // 13 (Floor under col 4-5. Shaft continues at 1-2)
+  { 1,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1 }, // 14 (Exit shaft at 1-2)
+  { 1,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1 }, // 15
+  { 1,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,1,1,1 }, // 16 
+  { 1,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1 }, // 17
+  { 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1 }  // 18
+};
+
+int[][] grid;
+float tileSize;
+float offsetX, offsetY;
+int runPhase = 1; 
+
+Mario mario;
+Goomba goomba;
+Mushroom mushroom;
+
+void setup() {
+  size(1280, 720); // Set to fullScreen() if running natively on APDE Android
+  tileSize = min(width / (float)COLS, (height - 60) / (float)ROWS);
+  offsetX = (width - (tileSize * COLS)) / 2;
+  offsetY = ((height - 60) - (tileSize * ROWS)) / 2 + 60;
+  resetSim();
+}
+
+void resetSim() {
+  grid = new int[ROWS][COLS];
+  for (int r = 0; r < ROWS; r++) {
+    for (int c = 0; c < COLS; c++) {
+      grid[r][c] = originalGrid[r][c];
+    }
+  }
+  mario = new Mario(1.0 * tileSize, 2.2 * tileSize);
+  goomba = new Goomba(4.5 * tileSize, 3.1 * tileSize);
+  mushroom = null;
+}
+
+void draw() {
+  background(92, 148, 252); 
+
+  pushMatrix();
+  translate(offsetX, offsetY);
+
+  drawLevel();
+
+  if (goomba != null) goomba.draw();
+  if (mushroom != null) {
+    mushroom.update();
+    mushroom.draw();
+  }
+
+  mario.update();
+  mario.draw();
+
+  popMatrix();
+  drawOverlay();
+}
+
+void drawLevel() {
+  for (int r = 0; r < ROWS; r++) {
+    for (int c = 0; c < COLS; c++) {
+      float x = c * tileSize;
+      float y = r * tileSize;
+      int v = grid[r][c];
+      
+      if (v == 1) { 
+        // CHOCOLATE BLOCK (Unbreakable)
+        fill(180, 80, 30); noStroke(); rect(x, y, tileSize, tileSize);
+        fill(220, 130, 70);
+        beginShape(); vertex(x, y); vertex(x + tileSize, y); vertex(x + tileSize*0.8, y + tileSize*0.2); vertex(x + tileSize*0.2, y + tileSize*0.2); endShape(CLOSE);
+        beginShape(); vertex(x, y); vertex(x + tileSize*0.2, y + tileSize*0.2); vertex(x + tileSize*0.2, y + tileSize*0.8); vertex(x, y + tileSize); endShape(CLOSE);
+        fill(100, 40, 10);
+        beginShape(); vertex(x, y + tileSize); vertex(x + tileSize, y + tileSize); vertex(x + tileSize*0.8, y + tileSize*0.8); vertex(x + tileSize*0.2, y + tileSize*0.8); endShape(CLOSE);
+        beginShape(); vertex(x + tileSize, y); vertex(x + tileSize*0.8, y + tileSize*0.2); vertex(x + tileSize*0.8, y + tileSize*0.8); vertex(x + tileSize, y + tileSize); endShape(CLOSE);
+        fill(150, 60, 20); rect(x + tileSize*0.2, y + tileSize*0.2, tileSize*0.6, tileSize*0.6);
+      } 
+      else if (v == 3) {
+        // YELLOW BLOCK (Breakable Bricks)
+        fill(250, 210, 0); stroke(200, 150, 0); strokeWeight(1.5);
+        rect(x, y, tileSize, tileSize);
+        stroke(180, 120, 0);
+        line(x, y + tileSize/2, x + tileSize, y + tileSize/2);
+        line(x + tileSize/2, y, x + tileSize/2, y + tileSize/2);
+        line(x + tileSize/4, y + tileSize/2, x + tileSize/4, y + tileSize);
+        line(x + tileSize*0.75, y + tileSize/2, x + tileSize*0.75, y + tileSize);
+      } 
+      else if (v == 2) { 
+        // Q-BLOCK 
+        fill(220, 50, 50); stroke(0); strokeWeight(1.5);
+        rect(x, y, tileSize, tileSize);
+        fill(255); textAlign(CENTER, CENTER); textSize(tileSize * 0.7);
+        text("?", x + tileSize/2, y + tileSize/2 - 2);
+      } 
+      else if (v == 4) { 
+        // USED BLOCK
+        fill(140, 90, 60); stroke(0); strokeWeight(1.5);
+        rect(x, y, tileSize, tileSize);
+        fill(0, 50); rect(x + tileSize*0.1, y + tileSize*0.1, tileSize*0.8, tileSize*0.8);
+      }
+    }
+  }
+}
+
+void drawOverlay() {
+  fill(0, 0, 0, 200);
+  noStroke(); rect(0, 0, width, 60);
+  fill(255); textSize(17); textAlign(CENTER, CENTER);
+  if (runPhase == 1) {
+    text("PHASE 1: Shrinks, uses 1-high gap, grows, breaks out horizontal bricks, smashes bridges & jumps down zig-zag.", width/2, 30);
+  } else {
+    text("PHASE 2: Precision jump, stays Big, lands on upper bridge, smashes consecutively & jumps down zig-zag.", width/2, 30);
+  }
+}
+
+// ---------------- Entities ----------------
+
+class Mario {
+  float x, y, vx, vy;
+  boolean isSuper = true;
+  int state = 0;
+  int iFrames = 0;
+  int waitTimer = 0;
+  boolean facingRight = true;
+
+  Mario(float startX, float startY) {
+    x = startX;
+    y = startY;
+    vx = tileSize * 0.055;
+    vy = 0;
+  }
+
+  void update() {
+    float w = tileSize * 0.7;
+    float h = isSuper ? tileSize * 1.8 : tileSize * 0.9;
+    
+    if (iFrames > 0) iFrames--;
+    
+    // Core Physics Apply
+    x += vx;
+    vy += tileSize * 0.02; // Gravity
+    y += vy;
+    
+    if (vx > 0) facingRight = true;
+    if (vx < 0) facingRight = false;
+    
+    // --- Contextual Floor Collisions ---
+    if (runPhase == 1) {
+      if (state <= 4 && y + h >= 4 * tileSize && vy > 0) {
+        y = 4 * tileSize - h;
+        vy = 0;
+      }
+    } 
+    else if (runPhase == 2) {
+      if (state == 0 && y + h >= 4 * tileSize && vy > 0) {
+         y = 4 * tileSize - h;
+         vy = 0;
+      }
+    }
+    
+    // --- Cinematic AI State Machine ---
+    if (runPhase == 1) {
+      if (state == 0) { 
+        if (goomba != null && goomba.active && abs((x + w/2) - (goomba.x + tileSize*0.5)) < tileSize * 0.6) {
+          goomba.active = false;
+          isSuper = false; // Take intentional damage to fit through gap
+          y += tileSize * 0.9; 
+          iFrames = 60; 
+          vy = -tileSize * 0.2; 
+          state = 1;
+        }
+      } 
+      else if (state == 1) { 
+        vx = tileSize * 0.06;
+        if (x >= 22.15 * tileSize) { 
+          x = 22.15 * tileSize;
+          vx = 0;
+          vy = -tileSize * 0.50; 
+          state = 2;
+        }
+      } 
+      else if (state == 2) { 
+        if (vy >= 0 && y <= 3.0 * tileSize) { 
+          int headRow = 2; int headCol = 22;
+          if (grid[headRow][headCol] == 2) {
+            grid[headRow][headCol] = 4; 
+            mushroom = new Mushroom(headCol * tileSize, 1 * tileSize);
+            state = 3;
+          }
+        }
+      } 
+      else if (state == 3) { 
+        vx = -tileSize * 0.04;
+        if (x <= 21.1 * tileSize) {
+           x = 21.1 * tileSize;
+           vx = 0;
+           facingRight = true;
+        }
+        if (mushroom != null && mushroom.active) {
+          if (dist(x + w/2, y + h/2, mushroom.x + tileSize/2, mushroom.y + tileSize/2) < tileSize) {
+            mushroom.active = false;
+            isSuper = true; 
+            y -= tileSize * 0.9;
+            waitTimer = 15;
+            state = 4;
+          }
+        }
+      } 
+      else if (state == 4) { 
+        waitTimer--;
+        if (waitTimer <= 0) {
+          vx = tileSize * 0.06;
+          // Jump up when under the horizontal yellow bricks
+          if (x >= 23.8 * tileSize && grid[1][24] == 3) {
+            vx = 0;
+            // Break horizontal bricks
+            grid[1][23] = 0; 
+            grid[1][24] = 0; 
+            grid[1][25] = 0; 
+            vy = -tileSize * 0.70; 
+            state = 5;
+          }
+        }
+      }
+      else if (state == 5) { 
+        if (y + h <= 0) {
+          y = -h; 
+          vy = 0;
+          vx = -tileSize * 0.15; 
+          state = 6;
+        }
+      }
+      else if (state == 6) { 
+        y = -h; 
+        if (x <= 9.65 * tileSize) { 
+          x = 9.65 * tileSize;
+          vx = 0; 
+          facingRight = true;
+          waitTimer = 15;
+          state = 8;
+        }
+      }
+      else if (state == 8) { 
+        waitTimer--;
+        if (waitTimer <= 0) {
+          grid[2][9] = 0; grid[2][10] = 0; 
+          y = 0; 
+          vy = tileSize * 0.1; 
+          state = 9;
+        }
+      }
+      else if (state == 9) { 
+        if (y + h >= 4 * tileSize) {
+          y = 4 * tileSize - h; 
+          vy = 0;
+          waitTimer = 15;
+          state = 10;
+        }
+      }
+      // === Shared Zig Zag States ===
+      else if (state >= 10) executeZigZagFall(h);
+    } 
+    else if (runPhase == 2) {
+      if (state == 0) { 
+        vx = tileSize * 0.10; 
+        if (x >= 1.0 * tileSize) { 
+          vy = -tileSize * 0.55; 
+          state = 1;
+        }
+      } 
+      else if (state == 1) { 
+        if (vy > 0 && y + h >= 2 * tileSize && x >= 8.0 * tileSize) { 
+           y = 2 * tileSize - h;
+           vy = 0;
+           vx = 0; 
+           x = 9.65 * tileSize; 
+           waitTimer = 15; 
+           state = 2;
+        }
+      }
+      else if (state == 2) { 
+        waitTimer--;
+        if (waitTimer <= 0) {
+          grid[2][9] = 0; grid[2][10] = 0; 
+          vy = tileSize * 0.1; 
+          state = 3;
+        }
+      }
+      else if (state == 3) { 
+        if (y + h >= 4 * tileSize) {
+          y = 4 * tileSize - h;
+          vy = 0;
+          waitTimer = 15;
+          state = 4; // Translates perfectly into the Zig Zag logic
+        }
+      }
+      // === Shared Zig Zag States ===
+      else if (state >= 4) executeZigZagFall(h);
+    }
+  }
+
+  // Abstracted method that flawlessly navigates the bottom zig zag for both phases
+  void executeZigZagFall(float h) {
+    int s = (runPhase == 1) ? state : state + 6; // Normalize states so both phases use 10-15
+    
+    if (s == 10) { // Smashes the lower bridge to begin descent
+      waitTimer--;
+      if (waitTimer <= 0) {
+        grid[4][9] = 0; grid[4][10] = 0; 
+        vy = tileSize * 0.15; 
+        state++; 
+      }
+    }
+    else if (s == 11) { // Free falls down main shaft, lands on the first zig-zag floor (Row 11)
+      if (y + h >= 11 * tileSize) {
+        y = 11 * tileSize - h;
+        vy = 0;
+        vx = -tileSize * 0.08; // Navigate Left
+        state++;
+      }
+    }
+    else if (s == 12) { // Walks left to the first hole
+      if (x <= 4.5 * tileSize) {
+        x = 4.5 * tileSize;
+        vx = 0;
+        vy = tileSize * 0.15; // Drop down
+        state++;
+      }
+    }
+    else if (s == 13) { // Falls to second zig-zag floor (Row 13)
+      if (y + h >= 13 * tileSize) {
+        y = 13 * tileSize - h;
+        vy = 0;
+        vx = -tileSize * 0.08; // Navigate Left
+        state++;
+      }
+    }
+    else if (s == 14) { // Walks left to the final hole
+      if (x <= 1.5 * tileSize) {
+        x = 1.5 * tileSize;
+        vx = 0;
+        vy = tileSize * 0.15; // Final Drop
+        state++;
+      }
+    }
+    else if (s == 15) { // Falls completely off-screen
+      if (y > (ROWS + 1) * tileSize) {
+        runPhase = (runPhase == 1) ? 2 : 1; 
+        resetSim();
+      }
+    }
+  }
+
+  void draw() {
+    if (iFrames > 0 && (frameCount % 10 < 5)) return;
+    
+    float w = tileSize * 0.7;
+    float h = isSuper ? tileSize * 1.8 : tileSize * 0.9;
+    
+    pushMatrix();
+    if (!facingRight) {
+      translate(x + w, y);
+      scale(-1, 1);
+      translate(-x, -y);
+    }
+    
+    noStroke();
+    fill(200, 0, 0); rect(x, y, w, h, 3); // Overalls
+    fill(0, 0, 200); rect(x, y + h*0.4, w, h*0.4); // Shirt
+    fill(255, 200, 150); rect(x + w*0.3, y + h*0.1, w*0.7, h*0.3, 2); // Face
+    fill(200, 0, 0); rect(x, y, w, h*0.15, 2); // Hat 
+    
+    popMatrix();
+  }
+}
+
+class Goomba {
+  float x, y;
+  boolean active = true;
+  
+  Goomba(float sx, float sy) {
+    x = sx; y = sy;
+  }
+
+  void draw() {
+    if (!active) return;
+    float s = tileSize * 0.9;
+    float offset = (tileSize - s) / 2;
+    float cx = x + offset;
+    float cy = y + offset;
+    
+    noStroke();
+    fill(139, 69, 19); arc(cx + s/2, cy + s, s, s, PI, TWO_PI); // Body
+    fill(255, 200, 150); ellipse(cx + s/2, cy + s*0.7, s*0.7, s*0.4); // Face
+    fill(0); 
+    ellipse(cx + s*0.4, cy + s*0.7, s*0.1, s*0.2); 
+    ellipse(cx + s*0.6, cy + s*0.7, s*0.1, s*0.2); 
+    
+    float footAnim = sin(frameCount * 0.2) * s*0.1;
+    ellipse(cx + s*0.2, cy + s, s*0.4, s*0.2 + footAnim); 
+    ellipse(cx + s*0.8, cy + s, s*0.4, s*0.2 - footAnim); 
+  }
+}
+
+class Mushroom {
+  float x, y, vx, vy;
+  boolean active = true;
+  
+  Mushroom(float sx, float sy) {
+    x = sx; y = sy;
+    vx = -tileSize * 0.05; 
+    vy = -tileSize * 0.20; 
+  }
+
+  void update() {
+    if (!active) return;
+    float s = tileSize * 0.9;
+    vy += tileSize * 0.02; // Gravity
+    y += vy;
+    
+    if (vy > 0) {
+      if (y + s >= 4 * tileSize) {
+         y = 4 * tileSize - s; 
+         vy = 0; 
+      }
+    }
+    x += vx; 
+  }
+
+  void draw() {
+    if (!active) return;
+    float s = tileSize * 0.9;
+    float offset = (tileSize - s) / 2;
+    float cx = x + offset;
+    float cy = y + offset;
+    
+    noStroke();
+    fill(255); rect(cx + s*0.25, cy + s*0.5, s*0.5, s*0.5, 3);
+    fill(210, 30, 30); arc(cx + s/2, cy + s*0.5, s, s, PI, TWO_PI);
+    fill(255); 
+    ellipse(cx + s*0.25, cy + s*0.25, s*0.2, s*0.2); 
+    ellipse(cx + s*0.75, cy + s*0.25, s*0.2, s*0.2); 
+    ellipse(cx + s*0.5, cy + s*0.1, s*0.25, s*0.15); 
+  }
+}
