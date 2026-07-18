@@ -1,0 +1,309 @@
+// --- Game State Constants ---
+final int STATE_APPROACH = 0;
+final int STATE_JUMP_TO_PILLAR = 1;
+final int STATE_WALK_TO_CENTER = 2;
+final int STATE_STAND = 3;
+final int STATE_DECIDE = 4;
+final int STATE_MOVE = 5;
+final int STATE_FALLING = 6;
+
+// --- Engine Variables ---
+float scaleFactor = 1.0;
+int currentState = STATE_APPROACH;
+int stateTimer = 0;
+
+// --- Mario Variables ---
+float marioX = 120;
+float marioY = 200;
+float marioVX = 0;
+float marioVY = 0;
+float marioW = 26;
+float marioH = 54; // Starts as Big Mario
+boolean marioOnGround = true;
+float marioSpeed = 2.5;
+boolean choseLeft = false; // Variable Assignment: Left(True) or Right(False)
+boolean facingLeft = false; // Controls sprite rendering direction
+
+// --- Level Data ---
+ArrayList<Block> blocks = new ArrayList<Block>();
+
+void setup() {
+  fullScreen();
+  orientation(LANDSCAPE);
+  rectMode(CORNER);
+  ellipseMode(CENTER);
+  createLevel();
+}
+
+void draw() {
+  // 1. Screen Scaling (Target Resolution 960x540)
+  scaleFactor = min((float)width / 960.0, (float)height / 540.0);
+  background(107, 140, 255);
+  
+  pushMatrix();
+  translate((width - 960 * scaleFactor) / 2, (height - 540 * scaleFactor) / 2);
+  scale(scaleFactor);
+  
+  // 2. Draw Background Scenery
+  drawCloud(150, 80);
+  drawBush(540, 375); // Bush on the center pillar
+  
+  // 3. Process Physics & AI
+  updateAutoPlay();
+  updatePhysics();
+  
+  // 4. Render Level & Entities
+  for (Block b : blocks) {
+    b.display();
+  }
+  
+  drawMario(marioX, marioY);
+  drawUI();
+  
+  popMatrix();
+}
+
+// --- Level Geometry Builder (Variable Gadget) ---
+void createLevel() {
+  blocks.clear();
+  
+  // Top Ceiling Enclosure
+  for (int x = 0; x <= 880; x += 40) {
+    blocks.add(new Block(x, 120, 40, 40, 1));
+  }
+  
+  // Left Raised Platform (Starting Area)
+  for (int x = 0; x <= 280; x += 40) { // Ends exactly at x=320
+    for (int y = 280; y <= 560; y += 40) {
+      blocks.add(new Block(x, y, 40, 40, 1));
+    }
+  }
+  
+  // Center Pillar (The Decision Area)
+  for (int x = 440; x <= 640; x += 40) { // Starts at 440, Ends at 680. Center is 560
+    for (int y = 400; y <= 560; y += 40) {
+      blocks.add(new Block(x, y, 40, 40, 1));
+    }
+  }
+  
+  // Right Wall Restriction
+  blocks.add(new Block(800, 160, 40, 40, 1));
+  blocks.add(new Block(800, 200, 40, 40, 1));
+  for (int x = 800; x <= 880; x += 40) {
+    for (int y = 240; y <= 560; y += 40) {
+      blocks.add(new Block(x, y, 40, 40, 1));
+    }
+  }
+}
+
+// --- Block Class (Chocolate Box Visuals) ---
+class Block {
+  float x, y, w, h;
+  int type; 
+  
+  Block(float x, float y, float w, float h, int type) {
+    this.x = x; this.y = y; this.w = w; this.h = h; this.type = type;
+  }
+  
+  void display() {
+    strokeWeight(2);
+    if (type == 1) {
+      // Drawing the Chocolate Boxes Correctly
+      stroke(60, 20, 0); // Dark border
+      fill(120, 50, 15); // Rich chocolate brown
+      rect(x, y, w, h);
+      
+      // Inner bevel to make it look like a chocolate bar chunk
+      noFill();
+      stroke(160, 80, 30); // Lighter highlight
+      line(x + 4, y + 4, x + w - 4, y + 4);
+      line(x + 4, y + 4, x + 4, y + h - 4);
+      stroke(80, 30, 5); // Darker shadow
+      line(x + w - 4, y + 4, x + w - 4, y + h - 4);
+      line(x + 4, y + h - 4, x + w - 4, y + h - 4);
+      
+      // Center detail
+      stroke(60, 20, 0);
+      rect(x + 12, y + 12, w - 24, h - 24);
+    }
+  }
+}
+
+boolean checkAABB(float x1, float y1, float w1, float h1, float x2, float y2, float w2, float h2) {
+  return x1 < x2 + w2 && x1 + w1 > x2 && y1 < y2 + h2 && y1 + h1 > y2;
+}
+
+// --- Physics Engine ---
+void updatePhysics() {
+  marioVY += 0.6; // Gravity
+  if (marioVY > 12) marioVY = 12; // Terminal velocity
+  
+  // Mario X Collision
+  marioX += marioVX;
+  for (Block b : blocks) {
+    if (checkAABB(marioX, marioY, marioW, marioH, b.x, b.y, b.w, b.h)) {
+      if (marioVX > 0) marioX = b.x - marioW;
+      else if (marioVX < 0) marioX = b.x + b.w;
+      marioVX = 0;
+    }
+  }
+  
+  // Mario Y Collision
+  marioY += marioVY;
+  marioOnGround = false;
+  for (Block b : blocks) {
+    if (checkAABB(marioX, marioY, marioW, marioH, b.x, b.y, b.w, b.h)) {
+      if (marioVY > 0) { // Landing on top
+        marioY = b.y - marioH;
+        marioVY = 0;
+        marioOnGround = true;
+      } else if (marioVY < 0) { // Hitting head on ceiling
+        marioY = b.y + b.h;
+        marioVY = 0;
+      }
+    }
+  }
+}
+
+// --- Auto-Play AI State Machine ---
+void updateAutoPlay() {
+  // Update sprite facing direction automatically based on velocity
+  if (marioVX > 0) facingLeft = false;
+  if (marioVX < 0) facingLeft = true;
+
+  switch(currentState) {
+    case STATE_APPROACH:
+      marioVX = marioSpeed;
+      // When reaching the absolute edge of the left platform (x=320)
+      if (marioX >= 320 - marioW) {
+        marioVY = -10.0; // Jump up
+        marioVX = 4.0;   // Leap forward 
+        currentState = STATE_JUMP_TO_PILLAR;
+      }
+      break;
+      
+    case STATE_JUMP_TO_PILLAR:
+      // Once he safely lands on the center pillar
+      if (marioOnGround && marioY > 300) {
+        currentState = STATE_WALK_TO_CENTER;
+      }
+      break;
+      
+    case STATE_WALK_TO_CENTER:
+      marioVX = marioSpeed; // Keep walking right
+      // Stop exactly in the middle of the pillar (Center is x=560)
+      if (marioX >= 560 - (marioW/2)) {
+        marioVX = 0; // Stop moving
+        stateTimer = 60; // Stand and wait for 1 full second (60 frames)
+        currentState = STATE_STAND;
+      }
+      break;
+      
+    case STATE_STAND:
+      marioVX = 0;
+      stateTimer--;
+      // Time is up, make the decision!
+      if (stateTimer <= 0) {
+        currentState = STATE_DECIDE;
+      }
+      break;
+      
+    case STATE_DECIDE:
+      // Randomly pick the True/False variable path!
+      choseLeft = random(1) > 0.5;
+      currentState = STATE_MOVE;
+      break;
+      
+    case STATE_MOVE:
+      if (choseLeft) {
+        marioVX = -marioSpeed; // Walk left into the gap
+      } else {
+        marioVX = marioSpeed; // Walk right into the gap
+      }
+      
+      // As soon as he steps off the pillar into the air, fall straight down
+      if (!marioOnGround) {
+        marioVX = 0; 
+        currentState = STATE_FALLING;
+      }
+      break;
+      
+    case STATE_FALLING:
+      // Reset loop once he falls out of bounds completely
+      if (marioY > 600) {
+        resetSimulation();
+      }
+      break;
+  }
+}
+
+void resetSimulation() {
+  marioX = 120;
+  marioY = 200;
+  marioVX = 0;
+  marioVY = 0;
+  facingLeft = false;
+  currentState = STATE_APPROACH;
+}
+
+// --- Render Visuals ---
+void drawMario(float x, float y) {
+  pushMatrix();
+  translate(x, y);
+  
+  float dH = 54; // Always Big Mario in this gadget
+  float dW = marioW;
+  
+  // Base Body
+  fill(216, 40, 0); 
+  stroke(0); strokeWeight(1);
+  rect(0, 12, dW, dH - 12);
+  fill(0, 0, 180); 
+  rect(4, 16, dW - 8, dH - 16);
+  
+  // Render facing direction cleanly
+  if (facingLeft) {
+    // Head facing left
+    fill(252, 188, 176);
+    rect(6, 2, 16, 12);
+    // Cap
+    fill(216, 40, 0);
+    rect(4, 0, 20, 4);
+  } else {
+    // Head facing right
+    fill(252, 188, 176);
+    rect(4, 2, 16, 12);
+    // Cap
+    fill(216, 40, 0);
+    rect(2, 0, 20, 4);
+  }
+  
+  popMatrix();
+}
+
+void drawCloud(float x, float y) {
+  fill(255); noStroke();
+  rect(x, y, 90, 30, 15);
+  rect(x + 15, y - 15, 60, 30, 15);
+}
+
+void drawBush(float x, float y) {
+  fill(0, 168, 0); noStroke();
+  ellipse(x, y + 10, 25, 25);
+  ellipse(x + 20, y, 35, 35);
+  ellipse(x + 40, y + 10, 25, 25);
+}
+
+void drawUI() {
+  fill(0, 180); noStroke();
+  rect(20, 20, 260, 40, 4);
+  fill(255); textAlign(LEFT, CENTER); textSize(16);
+  
+  // Display the gadget name and the chosen variable
+  String varState = "Undecided (Thinking...)";
+  if (currentState == STATE_MOVE || currentState == STATE_FALLING) {
+    varState = choseLeft ? "Left Path (True)" : "Right Path (False)";
+  }
+  
+  text("Variable Gadget: " + varState, 35, 38);
+}
